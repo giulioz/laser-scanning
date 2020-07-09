@@ -24,7 +24,7 @@ def checkBlankArea(warped):
 
 
 def cropRect(gray):
-    ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
     minContourLength = 10
     polys = []
@@ -36,7 +36,7 @@ def cropRect(gray):
             if len(curve) == 4 and cv2.isContourConvex(curve):
                 polys.append(curve)
 
-    polys.sort(key=lambda x: outerContour(x, gray), reverse=False)
+    polys.sort(key=lambda x: outerContour(x, thresh), reverse=False)
     biggerContour = polys[0]
 
     destPoints: np.ndarray = np.array([[[0, warpedH]], [[0, 0]], [[warpedW, 0]], [[warpedW, warpedH]]])
@@ -56,16 +56,59 @@ def cropRect(gray):
     return warped
 
 
+def findChessboardCorners(thresh):
+    grayFloat = np.float32(thresh)
+    corners = cv2.cornerHarris(grayFloat, 2, 3, 0.04)
+    img[corners > 0.01 * corners.max()] = 255
+
+
 os.chdir("./project_data/G3DCV2020_data_part1_calibration/calib/")
 for file in glob.glob("*.png"):
     img = cv2.imread(file)
     gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
-    cropped1 = cropRect(gray)
-    cv2.imshow(file, cropped1)
+    cropped = cropRect(gray)
+    croppedColor = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
 
-# grayFloat = np.float32(warped)
-# corners = cv2.cornerHarris(grayFloat, 2, 3, 0.04)
-# warped[corners > 0.01 * corners.max()] = 255
+    # cropped = cv2.medianBlur(cropped, 9)
+    # kernel = np.ones((3, 3), np.uint8)
+    # cropped = cv2.dilate(cropped, kernel, iterations=3)
+
+    # minContourLength = 10
+    # polys = []
+    # contours, hierarchy = cv2.findContours(cropped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    # for contour in contours:
+    #     if len(contour) >= minContourLength:
+    #         epsilon = 0.1 * cv2.arcLength(contour, True)
+    #         curve = cv2.approxPolyDP(contour, epsilon, True)
+    #         if len(curve) == 4 and cv2.isContourConvex(curve):
+    #             polys.append(curve)
+    # polys.sort(key=lambda x: cv2.contourArea(x), reverse=True)
+    # polys = polys[1:24]
+    # cv2.drawContours(croppedColor, polys, -1, (255, 0, 255))
+
+    qualityLevel = 0.01
+    minDistance = 10
+    blockSize = 9
+    gradientSize = 9
+    useHarrisDetector = False
+    k = 0.1
+    corners = cv2.goodFeaturesToTrack(cropped, 70, qualityLevel, minDistance, None, \
+                                      blockSize=blockSize, gradientSize=gradientSize,
+                                      useHarrisDetector=useHarrisDetector, k=k)
+
+    winSize = (9, 9)
+    zeroZone = (-1, -1)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TermCriteria_COUNT, 40, 0.001)
+    corners = cv2.cornerSubPix(cropped, corners, winSize, zeroZone, criteria)
+    corners = np.int0(corners)
+
+    for i in corners:
+        x, y = i.ravel()
+        cv2.circle(croppedColor, (x, y), 3, (0, 0, 255), -1)
+
+    # findChessboardCorners(cropped)
+
+    cv2.imshow(file, croppedColor)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
