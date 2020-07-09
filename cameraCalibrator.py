@@ -53,46 +53,17 @@ def cropRect(gray):
             warped = rotated
             currMax = rotatedScore
 
-    return warped
+    return M, warped
 
 
-def findChessboardCorners(thresh):
-    grayFloat = np.float32(thresh)
-    corners = cv2.cornerHarris(grayFloat, 2, 3, 0.04)
-    img[corners > 0.01 * corners.max()] = 255
-
-
-os.chdir("./project_data/G3DCV2020_data_part1_calibration/calib/")
-for file in glob.glob("*.png"):
-    img = cv2.imread(file)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
-    cropped = cropRect(gray)
-    croppedColor = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
-
-    # cropped = cv2.medianBlur(cropped, 9)
-    # kernel = np.ones((3, 3), np.uint8)
-    # cropped = cv2.dilate(cropped, kernel, iterations=3)
-
-    # minContourLength = 10
-    # polys = []
-    # contours, hierarchy = cv2.findContours(cropped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-    # for contour in contours:
-    #     if len(contour) >= minContourLength:
-    #         epsilon = 0.1 * cv2.arcLength(contour, True)
-    #         curve = cv2.approxPolyDP(contour, epsilon, True)
-    #         if len(curve) == 4 and cv2.isContourConvex(curve):
-    #             polys.append(curve)
-    # polys.sort(key=lambda x: cv2.contourArea(x), reverse=True)
-    # polys = polys[1:24]
-    # cv2.drawContours(croppedColor, polys, -1, (255, 0, 255))
-
+def findChessboardCorners(cropped):
     qualityLevel = 0.01
     minDistance = 10
     blockSize = 9
     gradientSize = 9
     useHarrisDetector = False
     k = 0.1
-    corners = cv2.goodFeaturesToTrack(cropped, 70, qualityLevel, minDistance, None, \
+    corners = cv2.goodFeaturesToTrack(cropped, 70, qualityLevel, minDistance, None,
                                       blockSize=blockSize, gradientSize=gradientSize,
                                       useHarrisDetector=useHarrisDetector, k=k)
 
@@ -102,13 +73,28 @@ for file in glob.glob("*.png"):
     corners = cv2.cornerSubPix(cropped, corners, winSize, zeroZone, criteria)
     corners = np.int0(corners)
 
+    return corners
+
+
+os.chdir("./project_data/G3DCV2020_data_part1_calibration/calib/")
+for file in glob.glob("*.png"):
+    img = cv2.imread(file)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+    M, cropped = cropRect(gray)
+    invM = cv2.invert(M)[1]
+    # croppedColor = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
+
+    # cropped = cv2.medianBlur(cropped, 9)
+    # kernel = np.ones((3, 3), np.uint8)
+    # cropped = cv2.dilate(cropped, kernel, iterations=3)
+
+    corners = findChessboardCorners(cropped)
     for i in corners:
         x, y = i.ravel()
-        cv2.circle(croppedColor, (x, y), 3, (0, 0, 255), -1)
+        px, py = cv2.perspectiveTransform(np.float32([[[x, y]]]), invM)[0][0]
+        cv2.circle(img, (int(px), int(py)), 3, (0, 0, 255), -1)
 
-    # findChessboardCorners(cropped)
-
-    cv2.imshow(file, croppedColor)
+    cv2.imshow(file, img)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
