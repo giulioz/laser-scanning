@@ -1,4 +1,6 @@
-import glob, os
+import glob
+import os
+
 import cv2
 import numpy as np
 
@@ -40,16 +42,17 @@ def cropRect(gray):
     biggerContour = polys[0]
 
     destPoints: np.ndarray = np.array([[[0, warpedH]], [[0, 0]], [[warpedW, 0]], [[warpedW, warpedH]]])
-    M, mask = cv2.findHomography(biggerContour, destPoints)
+    M = cv2.findHomography(biggerContour, destPoints)[0]
     warped = cv2.warpPerspective(gray, M, (warpedW, warpedH))
 
     currMax = checkBlankArea(warped)
     for i in range(3):
-        destPoints = np.roll(destPoints, shift=1, axis=0)
-        M, mask = cv2.findHomography(biggerContour, destPoints)
-        rotated = cv2.warpPerspective(gray, M, (warpedW, warpedH))
+        biggerContour = np.roll(biggerContour, shift=1, axis=0)
+        M2 = cv2.findHomography(biggerContour, destPoints)[0]
+        rotated = cv2.warpPerspective(gray, M2, (warpedW, warpedH))
         rotatedScore = checkBlankArea(rotated)
         if rotatedScore > currMax:
+            M = M2
             warped = rotated
             currMax = rotatedScore
 
