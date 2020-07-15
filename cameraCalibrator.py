@@ -59,75 +59,44 @@ def cropRect(gray):
     return M, warped
 
 
-def findChessboardCornersInCropped(cropped):
-    qualityLevel = 0.01
-    minDistance = 10
-    blockSize = 9
-    gradientSize = 9
-    useHarrisDetector = False
-    k = 0.1
-    corners = cv2.goodFeaturesToTrack(cropped, 70, qualityLevel, minDistance, None,
-                                      blockSize=blockSize, gradientSize=gradientSize,
-                                      useHarrisDetector=useHarrisDetector, k=k)
-
-    winSize = (9, 9)
-    zeroZone = (-1, -1)
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TermCriteria_COUNT, 40, 0.001)
-    corners = cv2.cornerSubPix(cropped, corners, winSize, zeroZone, criteria)
-    corners = np.int0(corners)
-
-    color = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
-    for c in corners:
-        px, py = c[0]
-        cv2.circle(color, (px, py), 3, (0, 0, 255), -1)
-    cv2.imshow("cropped", color)
-    cv2.waitKey(0)
-
-    return corners
-
-
 def genChessboardCorners():
     width = 160
     height = 200
-    # borderPoints = [[10, 10], [150, 10], [150, 190], [10, 190]]
-    borderPoints = []
+    borderPoints = [[10, 10], [150, 10], [150, 190], [10, 190]]
     innerPoints = \
-        [[10, j] for j in range(40, 180, 20)] + \
+        [[20, j] for j in range(40, 200, 20)] + \
         [[i, j] for i in range(40, 120, 20) for j in range(20, 200, 20)] + \
         [[120, j] for j in range(40, 200, 20)] + \
         [[140, j] for j in range(60, 180, 20)]
 
     points = borderPoints + innerPoints
-
-    def transformPoint(p):
-        x, y = p
-        return [x / width * warpedW, y / height * warpedH]
-
-    return map(transformPoint, points)
+    return np.array([[[x / width * warpedW, y / height * warpedH]] for x, y in points]).astype(np.float32)
 
 
 def findChessboardCorners(gray):
     M, cropped = cropRect(gray)
+    # cv2.imshow("cropped", cropped)
+    kernel = np.ones((4, 4), np.uint8)
+    open = cv2.morphologyEx(cropped, cv2.MORPH_OPEN, kernel)
+    close = cv2.morphologyEx(open, cv2.MORPH_CLOSE, kernel)
+    # cv2.imshow("open", open)
+    # cv2.imshow("close", close)
+
     invM = cv2.invert(M)[1]
-    corners = findChessboardCornersInCropped(cropped)
     targetCorners = genChessboardCorners()
     imagePoints = []
     objectPoints = []
 
-    for t in targetCorners:
-        tx, ty = t
-        minDistance = 10000000
-        minX = 0
-        minY = 0
-        for i in corners:
-            x, y = i.ravel()
-            distance = (x - tx) ** 2 + (y - ty) ** 2
-            if distance < minDistance:
-                minDistance = distance
-                minX = x
-                minY = y
+    winSize = (32, 32)
+    zeroZone = (-1, -1)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TermCriteria_COUNT, 200, 0.1)
+    corners = cv2.cornerSubPix(close, targetCorners, winSize, zeroZone, criteria)
+    # corners = targetCorners
+    projected = cv2.perspectiveTransform(corners, invM)
 
-        px, py = cv2.perspectiveTransform(np.float32([[[minX, minY]]]), invM)[0][0]
+    for t, p in zip(targetCorners, projected):
+        tx, ty = t[0]
+        px, py = p[0]
         objectPoints.append([tx, ty, 0])
         imagePoints.append([px, py])
 
@@ -148,16 +117,13 @@ def run():
         imagePoints.append(imgImagePoints)
         objectPoints.append(imgObjectPoints)
 
-        # for c in imgImagePoints:
-        #     px, py = c
-        #     cv2.circle(img, (px, py), 3, (0, 0, 255), -1)
-        # cv2.imshow(file, img)
+        for c in imgImagePoints:
+            px, py = c
+            cv2.circle(img, (px, py), 3, (0, 0, 255), -1)
+        cv2.imshow(file, img)
 
-        print(i)
+        print(f"Image {i}/50")
         i += 1
-
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
 
     imagePoints = np.array(imagePoints).astype(np.float32)
     imagePoints = np.reshape(
@@ -171,7 +137,10 @@ def run():
     print(f"\n\nRMS: {ret}")
     print(f"\n\nK: {K}")
     print(f"Distortion parameters:\n{dist}")
-    print(f"Images used for calibration: {imagePoints.shape[0]} out of 50")
+    print(f"Images used for calibration: {imagePoints.shape[0]}/50")
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 
 run()
