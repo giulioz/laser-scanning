@@ -59,7 +59,7 @@ def cropRect(gray):
     return M, warped
 
 
-def findChessboardCorners(cropped):
+def findChessboardCornersInCropped(cropped):
     qualityLevel = 0.01
     minDistance = 10
     blockSize = 9
@@ -76,28 +76,102 @@ def findChessboardCorners(cropped):
     corners = cv2.cornerSubPix(cropped, corners, winSize, zeroZone, criteria)
     corners = np.int0(corners)
 
+    color = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
+    for c in corners:
+        px, py = c[0]
+        cv2.circle(color, (px, py), 3, (0, 0, 255), -1)
+    cv2.imshow("cropped", color)
+    cv2.waitKey(0)
+
     return corners
 
 
-os.chdir("./project_data/G3DCV2020_data_part1_calibration/calib/")
-for file in glob.glob("*.png"):
-    img = cv2.imread(file)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+def genChessboardCorners():
+    width = 160
+    height = 200
+    # borderPoints = [[10, 10], [150, 10], [150, 190], [10, 190]]
+    borderPoints = []
+    innerPoints = \
+        [[10, j] for j in range(40, 180, 20)] + \
+        [[i, j] for i in range(40, 120, 20) for j in range(20, 200, 20)] + \
+        [[120, j] for j in range(40, 200, 20)] + \
+        [[140, j] for j in range(60, 180, 20)]
+
+    points = borderPoints + innerPoints
+
+    def transformPoint(p):
+        x, y = p
+        return [x / width * warpedW, y / height * warpedH]
+
+    return map(transformPoint, points)
+
+
+def findChessboardCorners(gray):
     M, cropped = cropRect(gray)
     invM = cv2.invert(M)[1]
-    # croppedColor = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
+    corners = findChessboardCornersInCropped(cropped)
+    targetCorners = genChessboardCorners()
+    imagePoints = []
+    objectPoints = []
 
-    # cropped = cv2.medianBlur(cropped, 9)
-    # kernel = np.ones((3, 3), np.uint8)
-    # cropped = cv2.dilate(cropped, kernel, iterations=3)
+    for t in targetCorners:
+        tx, ty = t
+        minDistance = 10000000
+        minX = 0
+        minY = 0
+        for i in corners:
+            x, y = i.ravel()
+            distance = (x - tx) ** 2 + (y - ty) ** 2
+            if distance < minDistance:
+                minDistance = distance
+                minX = x
+                minY = y
 
-    corners = findChessboardCorners(cropped)
-    for i in corners:
-        x, y = i.ravel()
-        px, py = cv2.perspectiveTransform(np.float32([[[x, y]]]), invM)[0][0]
-        cv2.circle(img, (int(px), int(py)), 3, (0, 0, 255), -1)
+        px, py = cv2.perspectiveTransform(np.float32([[[minX, minY]]]), invM)[0][0]
+        objectPoints.append([tx, ty, 0])
+        imagePoints.append([px, py])
 
-    cv2.imshow(file, img)
+    return imagePoints, objectPoints
 
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+
+def run():
+    imagePoints = []
+    objectPoints = []
+
+    os.chdir("./project_data/G3DCV2020_data_part1_calibration/calib/")
+    i = 0
+    for file in glob.glob("*.png"):
+        img = cv2.imread(file)
+        gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+        imgImagePoints, imgObjectPoints = findChessboardCorners(gray)
+
+        imagePoints.append(imgImagePoints)
+        objectPoints.append(imgObjectPoints)
+
+        # for c in imgImagePoints:
+        #     px, py = c
+        #     cv2.circle(img, (px, py), 3, (0, 0, 255), -1)
+        # cv2.imshow(file, img)
+
+        print(i)
+        i += 1
+
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    imagePoints = np.array(imagePoints).astype(np.float32)
+    imagePoints = np.reshape(
+        imagePoints, (imagePoints.shape[0], imagePoints.shape[1], 1, 2)
+    )
+    objectPoints = np.array(objectPoints).astype(np.float32)
+
+    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objectPoints, imagePoints, (1296, 972), None, None
+    )
+    print(f"\n\nRMS: {ret}")
+    print(f"\n\nK: {K}")
+    print(f"Distortion parameters:\n{dist}")
+    print(f"Images used for calibration: {imagePoints.shape[0]} out of 50")
+
+
+run()
