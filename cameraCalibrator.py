@@ -4,22 +4,19 @@ import os
 import cv2
 import numpy as np
 
+from utils import (
+    outerContour
+)
+
 warpedW = 700
 warpedH = 900
 
 
-def outerContour(contour, gray):
-    margin = 10
-    kernel = np.ones((margin, margin), np.uint8)
-    mask = np.zeros(gray.shape[:2], dtype=np.uint8)
-    cv2.fillConvexPoly(mask, contour, 255)
-    eroded = cv2.erode(mask, kernel)
-    mask = cv2.bitwise_xor(eroded, mask)
-    mean = cv2.mean(gray, mask)
-    return mean[0]
-
-
 def checkBlankArea(warped):
+    """
+    Check the mean of the area expected to be an empty chess.
+    To align the chessboard image find a minimum of this value.
+    """
     roi = warped[75:160, 510:635]
     mean = cv2.mean(roi)
     return mean[0]
