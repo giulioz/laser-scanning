@@ -62,9 +62,10 @@ def cropRect(gray):
 def genChessboardCorners():
     width = 160
     height = 200
-    borderPoints = [[10, 10], [150, 10], [150, 190], [10, 190]]
+    # borderPoints = [[10, 10], [150, 10], [150, 190], [10, 190]]
+    borderPoints = [[10, 10], [150, 10], [150, 190]]
     innerPoints = \
-        [[20, j] for j in range(40, 200, 20)] + \
+        [[20, j] for j in range(40, 180, 20)] + \
         [[i, j] for i in range(40, 120, 20) for j in range(20, 200, 20)] + \
         [[120, j] for j in range(40, 200, 20)] + \
         [[140, j] for j in range(60, 180, 20)]
@@ -76,7 +77,7 @@ def genChessboardCorners():
 def findChessboardCorners(gray):
     M, cropped = cropRect(gray)
     # cv2.imshow("cropped", cropped)
-    kernel = np.ones((4, 4), np.uint8)
+    kernel = np.ones((6, 6), np.uint8)
     open = cv2.morphologyEx(cropped, cv2.MORPH_OPEN, kernel)
     close = cv2.morphologyEx(open, cv2.MORPH_CLOSE, kernel)
     # cv2.imshow("open", open)
@@ -121,6 +122,7 @@ def run():
             px, py = c
             cv2.circle(img, (px, py), 3, (0, 0, 255), -1)
         cv2.imshow(file, img)
+        cv2.waitKey(1)
 
         print(f"Image {i}/50")
         i += 1
