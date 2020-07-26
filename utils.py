@@ -25,7 +25,8 @@ def sortCorners(corners: np.ndarray):
     center = np.sum(corners, axis=0) / 4
     sortedCorners = sorted(
         corners,
-        key=lambda p: math.atan2(p[0][0] - center[0][0], p[0][1] - center[0][1]),
+        key=lambda p: math.atan2(
+            p[0][0] - center[0][0], p[0][1] - center[0][1]),
         reverse=True,
     )
     return np.roll(sortedCorners, 2, axis=0)
