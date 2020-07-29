@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 import open3d as o3d
+import sys
+import getopt
 
 from utils import (
     loadIntrinsics,
@@ -13,115 +15,162 @@ from utils import (
     findPointsInsidePoly
 )
 
+# The reference fiducial rectangles sizes
 rectWidth = 25
 rectHeight = 15
 
+# HSV ranges for laser line detection
+hsvMin = (150, 20, 78)
+hsvMax = (200, 255, 255)
+
+# Kernels for opening-closing
+kernel2 = np.ones((2, 2), np.uint8)
 kernel4 = np.ones((4, 4), np.uint8)
 
 
 def findRectanglePatterns(firstFrame):
     """
-    Given the first frame, finds the rectangular patterns in the image with float precision
+    Given the first frame, finds the 2D rectangular patterns in the image with float precision.
     """
+
+    # Threshold the image using Otsu algorithm
     gray = cv2.cvtColor(firstFrame, cv2.COLOR_RGBA2GRAY)
-    thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    thresh = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    # Find all the possible contours in thresholded image
+    contours, hierarchy = cv2.findContours(
+        thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
 
     winSize = (16, 16)
     zeroZone = (-1, -1)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TermCriteria_COUNT, 200, 0.1)
-
     minContourLength = 30
     polys = []
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     for contour in contours:
         if len(contour) >= minContourLength:
+            # We approximate a polygon, we are only interested in rectangles (4 points, convex)
             epsilon = 0.01 * cv2.arcLength(contour, True)
             curve = cv2.approxPolyDP(contour, epsilon, True)
             if len(curve) == 4 and cv2.isContourConvex(curve):
-                curve = cv2.cornerSubPix(gray, np.float32(curve), winSize, zeroZone, criteria)
+                # We use cornerSubPix for floating point refinement
+                curve = cv2.cornerSubPix(gray, np.float32(
+                    curve), winSize, zeroZone, criteria)
                 sortedCurve = sortCorners(curve)
                 score = outerContour(sortedCurve.astype(np.int32), gray)
                 polys.append((sortedCurve, score))
 
+    # We sort the found rectangles by score descending, using outerContour function
+    # The function calculates the mean of the border inside the rectangle: it must be around full black
+    # It's safe to take the first entry as a valid pattern if it exists
     polys.sort(key=lambda x: x[1], reverse=False)
     return [p[0] for p in polys]
 
 
 def findReference3DPoints(img, rect, plane, K_inv):
+    """
+    Given the thresholded laser, a rectangle for bounds, the rectangle plane and the inverse
+    camera matrix, finds all the 3D points inside the rectangle intersecting the plane.
+    This is used to find the reference 3D points inside the wall and desk rectangles.
+
+              laser
+     wall   /
+       |  /
+       x
+    /  |_____ desk
+    """
+
+    # Find the 2D points inside the rectangle
     imgPoints = findPointsInsidePoly(img, rect.astype(np.int32))
     if imgPoints is None:
         return None, None
-    homoImgPoints = np.hstack((imgPoints[:, 0], np.ones(imgPoints.shape[0]).reshape(-1, 1),))
+
+    # Create rays and find the intersections with plane
+    homoImgPoints = np.hstack(
+        (imgPoints[:, 0], np.ones(imgPoints.shape[0]).reshape(-1, 1),))
     rays = createRays(homoImgPoints, K_inv)
     points3D = [linePlaneIntersection(plane, ray) for ray in rays]
     return points3D, imgPoints
 
 
-def processFrame(firstFrame, undistorted, K_inv, upperRect, lowerRect, upperPlane, lowerPlane):
+def processFrame(firstFrame, undistorted, K_inv, upperRect, lowerRect, upperPlane, lowerPlane, debug=False):
     # Prepare the image for processing (thresholding) and find points
     hsv = cv2.cvtColor(undistorted, cv2.COLOR_BGR2HSV)
-    inRange = cv2.inRange(hsv, (150, 20, 80), (200, 255, 255))
-    opening = cv2.morphologyEx(inRange, cv2.MORPH_OPEN, kernel4)
-    laserPts = cv2.findNonZero(opening)
-
-    # Find reference points on desk and wall
-    upper3DPoints, upperImgPoints = findReference3DPoints(opening, upperRect, upperPlane, K_inv)
-    lower3DPoints, lowerImgPoints = findReference3DPoints(opening, lowerRect, lowerPlane, K_inv)
+    inRange = cv2.inRange(hsv, hsvMin, hsvMax)
+    final = cv2.morphologyEx(inRange, cv2.MORPH_OPEN, kernel4)
+    laserPts = cv2.findNonZero(final)
 
     # DEBUG INFO
-    if laserPts is not None:
-        for p in laserPts:
-            cv2.circle(undistorted, (p[0][0], p[0][1]), 1, (0, 0, 255))
-    cv2.imshow('undistorted', undistorted)
+    if debug:
+        if laserPts is not None:
+            for p in laserPts:
+                cv2.circle(undistorted, (p[0][0], p[0][1]), 1, (0, 0, 255))
+        cv2.imshow('undistorted', undistorted)
+
+    # Find reference points on desk and wall
+    upper3DPoints, upperImgPoints = findReference3DPoints(
+        final, upperRect, upperPlane, K_inv)
+    lower3DPoints, lowerImgPoints = findReference3DPoints(
+        final, lowerRect, lowerPlane, K_inv)
 
     # Then fit a plane if we have enough points
     if upper3DPoints is not None and lower3DPoints is not None:
+        # Find the corrisponding laser plane
         referencePoints = np.array(upper3DPoints + lower3DPoints)
         laserPlane = fitPlane(referencePoints)
 
-        homoImgPoints = np.hstack((laserPts[:, 0], np.ones(laserPts.shape[0]).reshape(-1, 1),))
+        # Find 3D points with line-plane intersection
+        homoImgPoints = np.hstack(
+            (laserPts[:, 0], np.ones(laserPts.shape[0]).reshape(-1, 1),))
         rays = createRays(homoImgPoints, K_inv)
         points3D = [linePlaneIntersection(laserPlane, ray) for ray in rays]
+
+        # Recover colors for points from first frame
         x = laserPts.squeeze(1)
-        colors = np.flip(firstFrame[x[:, 1], x[:, 0]].astype(np.float64) / 255.0, axis=1)
+        colors = np.flip(firstFrame[x[:, 1], x[:, 0]].astype(
+            np.float64) / 255.0, axis=1)
         return points3D, colors, laserPlane
     return None, None, None
 
 
-def plotPlane(plt3d, plane, color):
-    origin, normal = plane
-    xx, yy = np.meshgrid(range(-2000, 2000, 1000), range(-2000, 2000, 1000))
-    d = -origin.dot(normal)
-    z = (-normal[0] * xx - normal[1] * yy - d) * 1. / normal[2]
-    plt3d.plot_surface(xx, yy, z, alpha=0.2, color=color)
-
-
-def run(debug=True):
+def run(path, debug=False):
+    # Load our camera parameters
     K, dist = loadIntrinsics()
     K_inv = np.linalg.inv(K)
 
-    cap = cv2.VideoCapture("./project_data/G3DCV2020_data_part2_video/cup1.mp4")
-    # cap = cv2.VideoCapture("./project_data/G3DCV2020_data_part3_video/puppet.mp4")
-    # cap = cv2.VideoCapture("./project_data/G3DCV2020_data_part4_video/soap.mp4")
+    # Load our video and read the first frame
+    # We will use the first frame to find the reference rectangles and colors for the point cloud
+    cap = cv2.VideoCapture(path)
     firstFrameDistorted = cap.read()[1]
     firstFrame = cv2.undistort(firstFrameDistorted, K, dist)
 
+    # Finds the reference rectangles in the first frame
     polys = findRectanglePatterns(firstFrame)
     upperRect, lowerRect = polys[0:2]
 
-    # if debug:
-    #     cv2.drawContours(firstFrame, [upperRect.astype(np.int32), lowerRect.astype(np.int32)], -1, (0, 0, 255))
-    #     cv2.imshow("debug rect contours", firstFrame)
-    #     cv2.waitKey(1)
+    # DEBUG INFO
+    if debug:
+        firstFrameDbg = firstFrame.copy()
+        cv2.drawContours(firstFrameDbg, [upperRect.astype(
+            np.int32), lowerRect.astype(np.int32)], -1, (0, 0, 255))
+        cv2.imshow("debug rect contours", firstFrameDbg)
+        cv2.waitKey(1)
 
-    upperDestPoints: np.ndarray = np.array([[[0, rectHeight]], [[0, 0]], [[rectWidth, 0]], [[rectWidth, rectHeight]]])
-    upperRectHomo = cv2.findHomography(sortCorners(upperDestPoints), upperRect)[0]
+    # Find the WALL rectangle homography and plane
+    upperDestPoints: np.ndarray = np.array(
+        [[[0, rectHeight]], [[0, 0]], [[rectWidth, 0]], [[rectWidth, rectHeight]]])
+    upperRectHomo = cv2.findHomography(
+        sortCorners(upperDestPoints), upperRect)[0]
     upperPlane = findPlaneFromHomography(upperRectHomo, K_inv)
 
-    lowerDestPoints: np.ndarray = np.array([[[0, rectHeight]], [[0, 0]], [[rectWidth, 0]], [[rectWidth, rectHeight]]])
-    lowerRectHomo = cv2.findHomography(sortCorners(lowerDestPoints), lowerRect)[0]
+    # Find the DESK rectangle homography and plane
+    lowerDestPoints: np.ndarray = np.array(
+        [[[0, rectHeight]], [[0, 0]], [[rectWidth, 0]], [[rectWidth, rectHeight]]])
+    lowerRectHomo = cv2.findHomography(
+        sortCorners(lowerDestPoints), lowerRect)[0]
     lowerPlane = findPlaneFromHomography(lowerRectHomo, K_inv)
 
+    # Here we store our found 3D cloud
     objPoints = []
     objColors = []
 
@@ -135,7 +184,7 @@ def run(debug=True):
         undistorted = cv2.undistort(frame, K, dist)
         framePts, frameColors, laserPlane = processFrame(firstFrame, undistorted, K_inv, upperRect, lowerRect,
                                                          upperPlane,
-                                                         lowerPlane)
+                                                         lowerPlane, debug)
         if framePts is not None and frameColors is not None:
             objPoints.extend(framePts)
             objColors.extend(frameColors)
@@ -147,8 +196,10 @@ def run(debug=True):
         if cv2.waitKey(1) & 0xFF == ord('c'):  # Continue
             isRecording = True
 
+    # Finally, save our point cloud
     pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.vstack(objPoints).astype(np.float64))
+    pcd.points = o3d.utility.Vector3dVector(
+        np.vstack(objPoints).astype(np.float64))
     pcd.colors = o3d.utility.Vector3dVector(np.vstack(objColors))
     o3d.io.write_point_cloud("output.ply", pcd)
     o3d.visualization.draw_geometries([pcd])
@@ -157,4 +208,7 @@ def run(debug=True):
     cv2.destroyAllWindows()
 
 
-run()
+opts, args = getopt.getopt(sys.argv, "v")
+debug = args.count("-v") > 0
+path = args[-1]
+run(path, debug)

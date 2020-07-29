@@ -6,10 +6,7 @@ import getopt
 import cv2
 import numpy as np
 
-from utils import (
-    outerContour,
-    sortCorners
-)
+from utils import outerContour
 
 # Temp warped rectangle pattern size, proportional to the real size
 warpedW = 700
@@ -30,8 +27,9 @@ def removeXYSigns(warped):
     """
     Use a white rectangle to mask the XY signs, as they introduce noise
     """
-    points = np.array([[[97, 869], [36, 858], [27, 810], [74, 810], [94, 832]]])
-    cv2.fillPoly(warped, points, (255,255,255))
+    points = np.array(
+        [[[97, 869], [36, 858], [27, 810], [74, 810], [94, 832]]])
+    cv2.fillPoly(warped, points, (255, 255, 255))
 
 
 def findRectanglePatterns(gray):
