@@ -1,6 +1,8 @@
 *.ply
 project_data
 
+calibration_images/*.png
+
 .DS_Store
 
 # Byte-compiled / optimized / DLL files

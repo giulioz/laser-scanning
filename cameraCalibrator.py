@@ -174,7 +174,7 @@ def run(debug=False):
     objectPoints = []
 
     i = 0
-    for file in glob.glob("./project_data/G3DCV2020_data_part1_calibration/calib/*.png"):
+    for file in glob.glob("./calibration_images/*.png"):
         img = cv2.imread(file)
         gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
 
